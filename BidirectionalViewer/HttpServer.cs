@@ -393,7 +393,8 @@ namespace BidirectionalViewer
             {
                 if (!req.HasEntityBody) return new Dictionary<string, object>();
 
-                using (var reader = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
+                // 文字化け防止のため、常に明示的に UTF-8 エンコーディングで読み込む
+                using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
                 {
                     string json = reader.ReadToEnd();
                     if (string.IsNullOrWhiteSpace(json))
