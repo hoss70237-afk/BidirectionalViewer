@@ -16,12 +16,8 @@ namespace BidirectionalViewer
         public Func<string> GetText;
         public Func<int[]> GetCaptureRegion;
         public Func<int, string> GetRegisteredAppPath;
-        
-        // 追加: ウィンドウを最前面に呼び出す
         public Action ActivateWindow;
-        // 追加: 公開中のファイルパスを取得
         public Func<string> GetHostedFilePath;
-        // 追加: スマホからアップロードされたファイルを受け取る
         public Action<string, byte[]> OnFileUploaded;
     }
 
@@ -33,8 +29,6 @@ namespace BidirectionalViewer
         private readonly HttpListener _listener = new HttpListener();
         private readonly ScreenCaptureManager _capture;
         private readonly ServerCallbacks _callbacks;
-        
-        // 大きなファイルも受け取れるようMaxJsonLengthを最大化
         private readonly JavaScriptSerializer _serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
         private Thread _listenThread;
         private volatile bool _running;
@@ -66,11 +60,8 @@ namespace BidirectionalViewer
             {
                 HttpListenerContext context;
                 try { context = _listener.GetContext(); }
-                catch (Exception)
-                {
-                    if (!_running) break;
-                    continue;
-                }
+                catch (Exception) { if (!_running) break; continue; }
+                
                 ThreadPool.QueueUserWorkItem(_ =>
                 {
                     try { HandleRequest(context); }
@@ -103,6 +94,7 @@ namespace BidirectionalViewer
             if (path.Length == 0) path = "/";
             string method = req.HttpMethod;
 
+            // APIのルーティング
             switch (path + ":" + method)
             {
                 case "/ping:GET": HandlePing(res); break;
@@ -115,32 +107,76 @@ namespace BidirectionalViewer
                 case "/get_mouse_position:GET": HandleGetMousePosition(res); break;
                 case "/mouse:POST": HandleMouse(req, res); break;
                 case "/launch_app:POST": HandleLaunchApp(req, res); break;
-                case "/activate:GET": HandleActivate(res); break; // 追加
-                case "/download:GET": HandleDownload(res); break; // 追加
-                case "/upload:POST": HandleUpload(req, res); break; // 追加
-                default: SendError(res, 404, "not found"); break;
+                case "/activate:GET": HandleActivate(res); break;
+                case "/download:GET": HandleDownload(res); break;
+                case "/upload:POST": HandleUpload(req, res); break;
+                default:
+                    // 定義されていないパスの場合は PWA（webフォルダ）の静的ファイルを返す
+                    if (method == "GET") { ServeStaticFile(res, path); }
+                    else { SendError(res, 404, "not found"); }
+                    break;
             }
         }
 
-        private void HandlePing(HttpListenerResponse res)
+        // ---- 静的ファイル（PWA用）配信 ----
+        private void ServeStaticFile(HttpListenerResponse res, string path)
         {
-            SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } });
+            if (path == "/") path = "/index.html";
+
+            string exeDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            string webDir = Path.Combine(exeDir, "web");
+
+            if (!Directory.Exists(webDir))
+            {
+                SendError(res, 404, "PWA directory 'web' not found. Please create 'web' folder and put index.html.");
+                return;
+            }
+
+            // パストラバーサル攻撃を防止
+            string safePath = path.Replace("/", "\\").TrimStart('\\');
+            string filePath = Path.GetFullPath(Path.Combine(webDir, safePath));
+
+            if (!filePath.StartsWith(webDir, StringComparison.OrdinalIgnoreCase) || !File.Exists(filePath))
+            {
+                SendError(res, 404, "file not found");
+                return;
+            }
+
+            try
+            {
+                byte[] data = File.ReadAllBytes(filePath);
+                res.StatusCode = 200;
+
+                string ext = Path.GetExtension(filePath).ToLower();
+                switch (ext)
+                {
+                    case ".html": res.ContentType = "text/html; charset=utf-8"; break;
+                    case ".js": res.ContentType = "application/javascript; charset=utf-8"; break;
+                    case ".json": res.ContentType = "application/json; charset=utf-8"; break;
+                    case ".png": res.ContentType = "image/png"; break;
+                    case ".ico": res.ContentType = "image/x-icon"; break;
+                    default: res.ContentType = "application/octet-stream"; break;
+                }
+
+                res.ContentLength64 = data.Length;
+                using (var os = res.OutputStream) { os.Write(data, 0, data.Length); }
+                res.Close();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("ServeStaticFile", ex);
+                SendError(res, 500, "file read error");
+            }
         }
 
-        private void HandleActivate(HttpListenerResponse res)
-        {
-            if (_callbacks.ActivateWindow != null) _callbacks.ActivateWindow();
-            SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } });
-        }
-
+        // ---- 以降は既存のAPIメソッド群 (変更なし) ----
+        private void HandlePing(HttpListenerResponse res) { SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } }); }
+        private void HandleActivate(HttpListenerResponse res) { if (_callbacks.ActivateWindow != null) _callbacks.ActivateWindow(); SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } }); }
+        
         private void HandleInput(HttpListenerRequest req, HttpListenerResponse res)
         {
             var body = ReadJsonBody(req);
-            if (body == null || !body.ContainsKey("text"))
-            {
-                SendError(res, 400, "invalid json: 'text' required");
-                return;
-            }
+            if (body == null || !body.ContainsKey("text")) { SendError(res, 400, "invalid json: 'text' required"); return; }
             string text = body["text"] as string ?? Convert.ToString(body["text"]);
             if (_callbacks.SetText != null) _callbacks.SetText(text);
             SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } });
@@ -151,22 +187,13 @@ namespace BidirectionalViewer
             string text = _callbacks.GetText != null ? _callbacks.GetText() : string.Empty;
             string hostedPath = _callbacks.GetHostedFilePath != null ? _callbacks.GetHostedFilePath() : null;
             string hostedFile = string.IsNullOrEmpty(hostedPath) ? "" : Path.GetFileName(hostedPath);
-
-            SendJson(res, 200, new Dictionary<string, object> 
-            { 
-                { "text", text ?? string.Empty },
-                { "hosted_file", hostedFile } // 追加
-            });
+            SendJson(res, 200, new Dictionary<string, object> { { "text", text ?? string.Empty }, { "hosted_file", hostedFile } });
         }
 
         private void HandleDownload(HttpListenerResponse res)
         {
             string path = _callbacks.GetHostedFilePath != null ? _callbacks.GetHostedFilePath() : null;
-            if (string.IsNullOrEmpty(path) || !File.Exists(path))
-            {
-                SendError(res, 404, "file not found");
-                return;
-            }
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) { SendError(res, 404, "file not found"); return; }
             try
             {
                 byte[] data = File.ReadAllBytes(path);
@@ -178,52 +205,29 @@ namespace BidirectionalViewer
                 using (var os = res.OutputStream) { os.Write(data, 0, data.Length); }
                 res.Close();
             }
-            catch (Exception ex)
-            {
-                Logger.LogException("HandleDownload", ex);
-                SendError(res, 500, "file read error");
-            }
+            catch (Exception ex) { Logger.LogException("HandleDownload", ex); SendError(res, 500, "file read error"); }
         }
 
         private void HandleUpload(HttpListenerRequest req, HttpListenerResponse res)
         {
             var body = ReadJsonBody(req);
-            if (body == null || !body.ContainsKey("filename") || !body.ContainsKey("data"))
-            {
-                SendError(res, 400, "invalid payload");
-                return;
-            }
+            if (body == null || !body.ContainsKey("filename") || !body.ContainsKey("data")) { SendError(res, 400, "invalid payload"); return; }
             try
             {
                 string filename = Convert.ToString(body["filename"]);
                 byte[] data = Convert.FromBase64String(Convert.ToString(body["data"]));
-                
                 if (_callbacks.OnFileUploaded != null) _callbacks.OnFileUploaded(filename, data);
                 if (_callbacks.ActivateWindow != null) _callbacks.ActivateWindow();
-                
                 SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } });
             }
-            catch (Exception ex)
-            {
-                Logger.LogException("HandleUpload", ex);
-                SendError(res, 500, "failed to decode base64");
-            }
+            catch (Exception ex) { Logger.LogException("HandleUpload", ex); SendError(res, 500, "failed to decode base64"); }
         }
 
-        // --- その他既存メソッド群は変更なしのため省略せず記述 ---
         private void HandleCaptureOnce(HttpListenerResponse res)
         {
             int[] region = _callbacks.GetCaptureRegion != null ? _callbacks.GetCaptureRegion() : null;
-            if (region == null || region.Length != 4)
-            {
-                SendError(res, 400, "capture_region is not set");
-                return;
-            }
-            try
-            {
-                _capture.CaptureRegion(region);
-                SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } });
-            }
+            if (region == null || region.Length != 4) { SendError(res, 400, "capture_region is not set"); return; }
+            try { _capture.CaptureRegion(region); SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } }); }
             catch (ArgumentException ex) { SendError(res, 400, ex.Message); }
         }
 
@@ -256,11 +260,7 @@ namespace BidirectionalViewer
         private void HandleMouse(HttpListenerRequest req, HttpListenerResponse res)
         {
             var body = ReadJsonBody(req);
-            if (body == null || !body.ContainsKey("action"))
-            {
-                SendError(res, 400, "invalid json: 'action' required");
-                return;
-            }
+            if (body == null || !body.ContainsKey("action")) { SendError(res, 400, "invalid json: 'action' required"); return; }
             string action = Convert.ToString(body["action"]);
             int x = body.ContainsKey("x") ? ToInt(body["x"]) : 0;
             int y = body.ContainsKey("y") ? ToInt(body["y"]) : 0;
@@ -281,25 +281,13 @@ namespace BidirectionalViewer
         private void HandleLaunchApp(HttpListenerRequest req, HttpListenerResponse res)
         {
             var body = ReadJsonBody(req);
-            if (body == null || !body.ContainsKey("app_number"))
-            {
-                SendError(res, 400, "invalid json: 'app_number' required");
-                return;
-            }
+            if (body == null || !body.ContainsKey("app_number")) { SendError(res, 400, "invalid json: 'app_number' required"); return; }
             int number = ToInt(body["app_number"]);
             string path = _callbacks.GetRegisteredAppPath != null ? _callbacks.GetRegisteredAppPath(number) : null;
             if (string.IsNullOrEmpty(path)) { SendError(res, 400, "app not registered"); return; }
             if (!File.Exists(path)) { SendError(res, 404, "app file not found"); return; }
-            try
-            {
-                Process.Start(path);
-                SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } });
-            }
-            catch (Exception ex)
-            {
-                Logger.LogException("HandleLaunchApp", ex);
-                SendError(res, 500, "failed to start process");
-            }
+            try { Process.Start(path); SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } }); }
+            catch (Exception ex) { Logger.LogException("HandleLaunchApp", ex); SendError(res, 500, "failed to start process"); }
         }
 
         private void SendJson(HttpListenerResponse res, int statusCode, object obj)
