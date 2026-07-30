@@ -21,7 +21,7 @@ namespace BidirectionalViewer
         private Button[] _appButtons;
         
         // ファイル送受信関連
-        private Button _btnHostFile, _btnSaveReceived;
+        private Button _btnHostFile, _btnHostFileClear, _btnSaveReceived;
         private Label _lblHostedFile, _lblReceivedFile;
         private string _hostedFilePath;
         private string _receivedFileName;
@@ -54,9 +54,9 @@ namespace BidirectionalViewer
         {
             this.Text = "双方向メッセージビューア";
             this.Width = 640;
-            this.Height = 620;
+            this.Height = 440; // 初期状態（アプリパネル非表示）の高さ
             this.StartPosition = FormStartPosition.Manual;
-            this.MinimumSize = new Size(580, 500);
+            this.MinimumSize = new Size(580, 400);
 
             // NotifyIcon (タスクトレイ)
             _notifyIcon = new NotifyIcon
@@ -67,7 +67,7 @@ namespace BidirectionalViewer
             };
             _notifyIcon.DoubleClick += (s, e) => RestoreWindow();
 
-            // テキストエリア (下部のパネル上端まで広がる)
+            // テキストエリア
             _textArea = new TextBox
             {
                 Multiline = true,
@@ -76,17 +76,17 @@ namespace BidirectionalViewer
                 AcceptsTab = true,
                 WordWrap = true,
                 Location = new Point(12, 12),
-                Size = new Size(600, 200),
+                Size = new Size(600, 240),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
                 Font = new Font("Consolas", 10F)
             };
             this.Controls.Add(_textArea);
 
-            // 下部パネル (フォームの下部に張り付き)
+            // 下部パネル (閉じた状態の高さ 114)
             _bottomPanel = new Panel
             {
-                Location = new Point(12, 220),
-                Size = new Size(600, 310),
+                Location = new Point(12, 260),
+                Size = new Size(600, 114),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
             };
             this.Controls.Add(_bottomPanel);
@@ -113,12 +113,16 @@ namespace BidirectionalViewer
             _lblCaptureRegion = new Label { Text = "未設定", Location = new Point(96, by + 5), AutoSize = true };
             
             _btnAppToggle = MakeButton("アプリ設定", 414, by, 90);
-            _btnAppToggle.Click += (s, e) => _appPanel.Visible = !_appPanel.Visible;
+            _btnAppToggle.Click += (s, e) => ToggleAppPanel(); // サイズ自動調整メソッドを呼び出す
 
             by = 76;
             _btnHostFile = MakeButton("PCファイル公開", 0, by, 110);
             _btnHostFile.Click += (s, e) => OnHostFile();
-            _lblHostedFile = new Label { Text = "未公開", Location = new Point(116, by + 5), AutoSize = true, MaximumSize = new Size(180, 20), AutoEllipsis = true };
+            
+            _btnHostFileClear = MakeButton("×", 114, by, 26);
+            _btnHostFileClear.Click += (s, e) => { _hostedFilePath = null; _lblHostedFile.Text = "未公開"; };
+
+            _lblHostedFile = new Label { Text = "未公開", Location = new Point(144, by + 5), AutoSize = true, MaximumSize = new Size(160, 20), AutoEllipsis = true };
 
             _btnSaveReceived = MakeButton("受信ファイル保存", 318, by, 110);
             _btnSaveReceived.Enabled = false;
@@ -149,7 +153,7 @@ namespace BidirectionalViewer
             _bottomPanel.Controls.AddRange(new Control[] {
                 _btnSend, _btnCopy, _btnPaste, _btnDelete, _btnSaveTxt, _btnSavePy,
                 _btnSelectRegion, _lblCaptureRegion, _btnAppToggle,
-                _btnHostFile, _lblHostedFile, _btnSaveReceived, _lblReceivedFile,
+                _btnHostFile, _btnHostFileClear, _lblHostedFile, _btnSaveReceived, _lblReceivedFile,
                 sep, _appPanel
             });
 
@@ -163,6 +167,33 @@ namespace BidirectionalViewer
         private Button MakeButton(string text, int x, int y, int w)
         {
             return new Button { Text = text, Location = new Point(x, y), Size = new Size(w, 28) };
+        }
+
+        // アプリパネル表示/非表示時のウィンドウサイズ伸縮
+        private void ToggleAppPanel()
+        {
+            // サイズ変更時にTextBoxが追従して伸び縮みしないように、一時的にBottomアンカーを外す
+            _textArea.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            _bottomPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+            int adjustHeight = 112; // アプリパネルの高さ分
+
+            if (!_appPanel.Visible)
+            {
+                _appPanel.Visible = true;
+                this.Height += adjustHeight;
+                _bottomPanel.Height += adjustHeight;
+            }
+            else
+            {
+                _appPanel.Visible = false;
+                this.Height -= adjustHeight;
+                _bottomPanel.Height -= adjustHeight;
+            }
+
+            // アンカーを元に戻す
+            _textArea.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+            _bottomPanel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         }
 
         // ---- 最小化時・復帰処理 ----
@@ -187,7 +218,6 @@ namespace BidirectionalViewer
             if (this.WindowState == FormWindowState.Minimized) this.WindowState = FormWindowState.Normal;
             
             this.Activate();
-            // 一瞬最前面に持ってくる
             this.TopMost = true;
             this.TopMost = false;
         }
@@ -267,7 +297,14 @@ namespace BidirectionalViewer
                 _textArea.Invoke(new Action<string>(SetTextThreadSafe), text);
                 return;
             }
+
+            if (text != null)
+            {
+                // スマホからの改行(\n)をWindows標準の改行(\r\n)に統一し、正しく改行表示させる
+                text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
+            }
             _textArea.Text = text ?? string.Empty;
+
             FlashTextAreaGreen();
             RestoreWindow(); // 受信時に最前面へ
         }
