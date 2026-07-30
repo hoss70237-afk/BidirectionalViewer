@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace BidirectionalViewer
@@ -22,6 +23,7 @@ namespace BidirectionalViewer
         private AppConfig _config;
         private ScreenCaptureManager _capture;
         private HttpServer _server;
+        private Timer _bgFlashTimer;
 
         public MainForm()
         {
@@ -267,6 +269,7 @@ namespace BidirectionalViewer
                 return;
             }
             _textArea.Text = text ?? string.Empty;
+            FlashTextAreaGreen();
         }
 
         private string GetTextThreadSafe()
@@ -289,33 +292,82 @@ namespace BidirectionalViewer
             return null;
         }
 
+        /// <summary>
+        /// 受信成功・送信成功時にテキストボックスの背景色を0.5秒間グリーンに点灯させる。
+        /// </summary>
+        private void FlashTextAreaGreen()
+        {
+            if (_textArea.InvokeRequired)
+            {
+                _textArea.Invoke(new Action(FlashTextAreaGreen));
+                return;
+            }
+
+            _textArea.BackColor = Color.LightGreen;
+
+            if (_bgFlashTimer != null)
+            {
+                _bgFlashTimer.Stop();
+                _bgFlashTimer.Dispose();
+            }
+
+            _bgFlashTimer = new Timer();
+            _bgFlashTimer.Interval = 500;
+            _bgFlashTimer.Tick += (s, e) =>
+            {
+                _textArea.BackColor = SystemColors.Window;
+                if (_bgFlashTimer != null)
+                {
+                    _bgFlashTimer.Stop();
+                    _bgFlashTimer.Dispose();
+                    _bgFlashTimer = null;
+                }
+            };
+            _bgFlashTimer.Start();
+        }
+
         // ---- ボタン動作 ----
 
-        private void OnSend()
+        private async void OnSend()
         {
+            string textToSend = _textArea.Text;
+            _btnSend.Enabled = false;
+
             try
             {
-                var payload = new System.Web.Script.Serialization.JavaScriptSerializer()
-                    .Serialize(new Dictionary<string, object> { { "text", _textArea.Text } });
-                byte[] data = Encoding.UTF8.GetBytes(payload);
+                // GUIスレッドのフリーズ（デッドロック）を防止するため、HTTP通信を非同期で実行
+                int statusCode = 0;
+                await Task.Run(() =>
+                {
+                    var payload = new System.Web.Script.Serialization.JavaScriptSerializer()
+                        .Serialize(new Dictionary<string, object> { { "text", textToSend } });
+                    byte[] data = Encoding.UTF8.GetBytes(payload);
 
-                var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:5000/input");
-                req.Method = "POST";
-                req.ContentType = "application/json; charset=utf-8";
-                req.ContentLength = data.Length;
-                using (var stream = req.GetRequestStream())
-                {
-                    stream.Write(data, 0, data.Length);
-                }
-                using (var resp = (HttpWebResponse)req.GetResponse())
-                {
-                    _statusLabel.Text = "送信完了: " + (int)resp.StatusCode;
-                }
+                    var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:5000/input");
+                    req.Method = "POST";
+                    req.ContentType = "application/json; charset=utf-8";
+                    req.ContentLength = data.Length;
+                    using (var stream = req.GetRequestStream())
+                    {
+                        stream.Write(data, 0, data.Length);
+                    }
+                    using (var resp = (HttpWebResponse)req.GetResponse())
+                    {
+                        statusCode = (int)resp.StatusCode;
+                    }
+                });
+
+                _statusLabel.Text = "送信完了: " + statusCode;
+                FlashTextAreaGreen();
             }
             catch (Exception ex)
             {
                 Logger.LogException("OnSend", ex);
                 _statusLabel.Text = "送信失敗（error.log参照）";
+            }
+            finally
+            {
+                _btnSend.Enabled = true;
             }
         }
 
@@ -443,6 +495,11 @@ namespace BidirectionalViewer
             }
             finally
             {
+                if (_bgFlashTimer != null)
+                {
+                    _bgFlashTimer.Stop();
+                    _bgFlashTimer.Dispose();
+                }
                 if (_server != null) _server.Dispose();
                 if (_capture != null) _capture.Dispose();
             }
