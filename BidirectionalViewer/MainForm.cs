@@ -13,12 +13,23 @@ namespace BidirectionalViewer
     public class MainForm : Form
     {
         private TextBox _textArea;
+        private Panel _bottomPanel;
+        private Panel _appPanel;
         private Button _btnSend, _btnCopy, _btnPaste, _btnDelete, _btnSaveTxt, _btnSavePy;
-        private Label _lblCaptureTitle, _lblCaptureRegion, _lblAppTitle, _lblAppStatus;
-        private Button _btnSelectRegion;
+        private Label _lblCaptureRegion, _lblAppTitle, _lblAppStatus;
+        private Button _btnSelectRegion, _btnAppToggle;
         private Button[] _appButtons;
+        
+        // ファイル送受信関連
+        private Button _btnHostFile, _btnSaveReceived;
+        private Label _lblHostedFile, _lblReceivedFile;
+        private string _hostedFilePath;
+        private string _receivedFileName;
+        private byte[] _receivedFileData;
+
         private StatusStrip _statusStrip;
         private ToolStripStatusLabel _statusLabel;
+        private NotifyIcon _notifyIcon;
 
         private AppConfig _config;
         private ScreenCaptureManager _capture;
@@ -35,41 +46,59 @@ namespace BidirectionalViewer
             StartServer();
 
             this.FormClosing += MainForm_FormClosing;
+            this.Resize += MainForm_Resize;
         }
 
         // ---- UI構築 ----
-
         private void InitializeUi()
         {
             this.Text = "双方向メッセージビューア";
             this.Width = 640;
-            this.Height = 560;
+            this.Height = 620;
             this.StartPosition = FormStartPosition.Manual;
-            this.MinimumSize = new Size(560, 480);
+            this.MinimumSize = new Size(580, 500);
 
-            // テキストエリア
+            // NotifyIcon (タスクトレイ)
+            _notifyIcon = new NotifyIcon
+            {
+                Icon = SystemIcons.Application,
+                Visible = true,
+                Text = "双方向メッセージビューア"
+            };
+            _notifyIcon.DoubleClick += (s, e) => RestoreWindow();
+
+            // テキストエリア (下部のパネル上端まで広がる)
             _textArea = new TextBox
             {
                 Multiline = true,
-                ScrollBars = ScrollBars.Both,
+                ScrollBars = ScrollBars.Vertical,
                 AcceptsReturn = true,
                 AcceptsTab = true,
-                WordWrap = false,
+                WordWrap = true,
                 Location = new Point(12, 12),
-                Size = new Size(600, 180),
+                Size = new Size(600, 200),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
                 Font = new Font("Consolas", 10F)
             };
             this.Controls.Add(_textArea);
 
-            // 操作ボタン行
-            int by = 200;
-            _btnSend    = MakeButton("送信",      12,  by, 70);
-            _btnCopy    = MakeButton("コピー",     88,  by, 70);
-            _btnPaste   = MakeButton("ペースト",   164, by, 70);
-            _btnDelete  = MakeButton("削除",      240, by, 70);
-            _btnSaveTxt = MakeButton("保存(.txt)", 330, by, 90);
-            _btnSavePy  = MakeButton("保存(.py)",  426, by, 90);
+            // 下部パネル (フォームの下部に張り付き)
+            _bottomPanel = new Panel
+            {
+                Location = new Point(12, 220),
+                Size = new Size(600, 310),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
+            };
+            this.Controls.Add(_bottomPanel);
+
+            // -- 下部パネル内の配置 --
+            int by = 0;
+            _btnSend    = MakeButton("送信",      0,   by, 70);
+            _btnCopy    = MakeButton("コピー",     76,  by, 70);
+            _btnPaste   = MakeButton("ペースト",   152, by, 70);
+            _btnDelete  = MakeButton("削除",      228, by, 70);
+            _btnSaveTxt = MakeButton("保存(.txt)", 318, by, 90);
+            _btnSavePy  = MakeButton("保存(.py)",  414, by, 90);
 
             _btnSend.Click    += (s, e) => OnSend();
             _btnCopy.Click    += (s, e) => OnCopy();
@@ -78,69 +107,51 @@ namespace BidirectionalViewer
             _btnSaveTxt.Click += (s, e) => OnSave(".txt");
             _btnSavePy.Click  += (s, e) => OnSave(".py");
 
-            foreach (var b in new[] { _btnSend, _btnCopy, _btnPaste, _btnDelete, _btnSaveTxt, _btnSavePy })
-            {
-                b.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-                this.Controls.Add(b);
-            }
-
-            // 区切り線1
-            this.Controls.Add(MakeSeparator(235));
-
-            // キャプチャ範囲設定
-            _lblCaptureTitle = new Label
-            {
-                Text = "画面キャプチャ範囲設定",
-                Font = new Font(this.Font, FontStyle.Bold),
-                Location = new Point(12, 248),
-                AutoSize = true
-            };
-            this.Controls.Add(_lblCaptureTitle);
-
-            _btnSelectRegion = MakeButton("範囲選択", 12, 272, 90);
+            by = 38;
+            _btnSelectRegion = MakeButton("範囲選択", 0, by, 90);
             _btnSelectRegion.Click += (s, e) => OnSelectRegion();
-            this.Controls.Add(_btnSelectRegion);
+            _lblCaptureRegion = new Label { Text = "未設定", Location = new Point(96, by + 5), AutoSize = true };
+            
+            _btnAppToggle = MakeButton("アプリ設定", 414, by, 90);
+            _btnAppToggle.Click += (s, e) => _appPanel.Visible = !_appPanel.Visible;
 
-            _lblCaptureRegion = new Label
-            {
-                Text = "未設定",
-                Location = new Point(112, 278),
-                AutoSize = true
-            };
-            this.Controls.Add(_lblCaptureRegion);
+            by = 76;
+            _btnHostFile = MakeButton("PCファイル公開", 0, by, 110);
+            _btnHostFile.Click += (s, e) => OnHostFile();
+            _lblHostedFile = new Label { Text = "未公開", Location = new Point(116, by + 5), AutoSize = true, MaximumSize = new Size(180, 20), AutoEllipsis = true };
 
-            // 区切り線2
-            this.Controls.Add(MakeSeparator(308));
+            _btnSaveReceived = MakeButton("受信ファイル保存", 318, by, 110);
+            _btnSaveReceived.Enabled = false;
+            _btnSaveReceived.Click += (s, e) => OnSaveReceivedFile();
+            _lblReceivedFile = new Label { Text = "なし", Location = new Point(434, by + 5), AutoSize = true, MaximumSize = new Size(160, 20), AutoEllipsis = true };
 
-            // アプリ登録
-            _lblAppTitle = new Label
-            {
-                Text = "アプリ登録 (スマホから起動)",
-                Font = new Font(this.Font, FontStyle.Bold),
-                Location = new Point(12, 320),
-                AutoSize = true
-            };
-            this.Controls.Add(_lblAppTitle);
+            by = 114;
+            var sep = new Label { BorderStyle = BorderStyle.Fixed3D, Location = new Point(0, by), Size = new Size(600, 2), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+
+            by = 126;
+            // アプリ登録パネル (非表示)
+            _appPanel = new Panel { Location = new Point(0, by), Size = new Size(600, 100), Visible = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            _lblAppTitle = new Label { Text = "アプリ登録 (スマホから起動)", Font = new Font(this.Font, FontStyle.Bold), Location = new Point(0, 0), AutoSize = true };
+            _appPanel.Controls.Add(_lblAppTitle);
 
             _appButtons = new Button[6];
             for (int i = 0; i < 6; i++)
             {
                 int number = i + 1;
-                var btn = MakeButton(number.ToString(), 12 + i * 50, 344, 42);
+                var btn = MakeButton(number.ToString(), i * 50, 24, 42);
                 btn.Click += (s, e) => OnRegisterApp(number);
                 _appButtons[i] = btn;
-                this.Controls.Add(btn);
+                _appPanel.Controls.Add(btn);
             }
+            _lblAppStatus = new Label { Text = "(未登録)", Location = new Point(0, 60), Size = new Size(600, 40), AutoEllipsis = true, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            _appPanel.Controls.Add(_lblAppStatus);
 
-            _lblAppStatus = new Label
-            {
-                Text = "(未登録)",
-                Location = new Point(12, 380),
-                Size = new Size(600, 40),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-                AutoEllipsis = true
-            };
-            this.Controls.Add(_lblAppStatus);
+            _bottomPanel.Controls.AddRange(new Control[] {
+                _btnSend, _btnCopy, _btnPaste, _btnDelete, _btnSaveTxt, _btnSavePy,
+                _btnSelectRegion, _lblCaptureRegion, _btnAppToggle,
+                _btnHostFile, _lblHostedFile, _btnSaveReceived, _lblReceivedFile,
+                sep, _appPanel
+            });
 
             // ステータスバー
             _statusStrip = new StatusStrip();
@@ -151,49 +162,51 @@ namespace BidirectionalViewer
 
         private Button MakeButton(string text, int x, int y, int w)
         {
-            return new Button
-            {
-                Text = text,
-                Location = new Point(x, y),
-                Size = new Size(w, 28)
-            };
+            return new Button { Text = text, Location = new Point(x, y), Size = new Size(w, 28) };
         }
 
-        private Label MakeSeparator(int y)
+        // ---- 最小化時・復帰処理 ----
+        private void MainForm_Resize(object sender, EventArgs e)
         {
-            return new Label
+            if (this.WindowState == FormWindowState.Minimized)
             {
-                BorderStyle = BorderStyle.Fixed3D,
-                Location = new Point(12, y),
-                Size = new Size(600, 2),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
-            };
+                this.ShowInTaskbar = false;
+                this.Hide();
+            }
+        }
+
+        private void RestoreWindow()
+        {
+            if (this.InvokeRequired)
+            {
+                this.Invoke(new Action(RestoreWindow));
+                return;
+            }
+            if (!this.Visible) this.Show();
+            this.ShowInTaskbar = true;
+            if (this.WindowState == FormWindowState.Minimized) this.WindowState = FormWindowState.Normal;
+            
+            this.Activate();
+            // 一瞬最前面に持ってくる
+            this.TopMost = true;
+            this.TopMost = false;
         }
 
         // ---- config反映 ----
-
         private void ApplyConfigToUi()
         {
-            // ウィンドウ位置
             if (_config.window_location != null)
             {
                 var loc = new Point(_config.window_location.X, _config.window_location.Y);
-                // 画面内に収まるか簡易チェック
-                Rectangle vs = SystemInformation.VirtualScreen;
-                if (vs.Contains(new Rectangle(loc, new Size(50, 50))))
-                {
+                if (SystemInformation.VirtualScreen.Contains(new Rectangle(loc, new Size(50, 50))))
                     this.Location = loc;
-                }
                 else
-                {
                     this.StartPosition = FormStartPosition.CenterScreen;
-                }
             }
             else
             {
                 this.StartPosition = FormStartPosition.CenterScreen;
             }
-
             UpdateCaptureRegionLabel();
             UpdateAppStatusLabel();
         }
@@ -201,14 +214,9 @@ namespace BidirectionalViewer
         private void UpdateCaptureRegionLabel()
         {
             if (_config.capture_region != null && _config.capture_region.Length == 4)
-            {
-                int[] r = _config.capture_region;
-                _lblCaptureRegion.Text = string.Format("({0}, {1}) - ({2}, {3})", r[0], r[1], r[2], r[3]);
-            }
+                _lblCaptureRegion.Text = string.Format("({0}, {1}) - ({2}, {3})", _config.capture_region[0], _config.capture_region[1], _config.capture_region[2], _config.capture_region[3]);
             else
-            {
                 _lblCaptureRegion.Text = "未設定";
-            }
         }
 
         private void UpdateAppStatusLabel()
@@ -217,18 +225,13 @@ namespace BidirectionalViewer
             for (int i = 1; i <= 6; i++)
             {
                 string key = i.ToString();
-                if (_config.registered_apps.ContainsKey(key) &&
-                    !string.IsNullOrEmpty(_config.registered_apps[key]))
-                {
-                    string name = Path.GetFileName(_config.registered_apps[key]);
-                    sb.Append(string.Format("{0}: {1}  ", i, name));
-                }
+                if (_config.registered_apps.ContainsKey(key) && !string.IsNullOrEmpty(_config.registered_apps[key]))
+                    sb.Append(string.Format("{0}: {1}  ", i, Path.GetFileName(_config.registered_apps[key])));
             }
             _lblAppStatus.Text = sb.Length > 0 ? sb.ToString().TrimEnd() : "(未登録)";
         }
 
         // ---- HTTPサーバー起動 ----
-
         private void StartServer()
         {
             var callbacks = new ServerCallbacks
@@ -236,7 +239,10 @@ namespace BidirectionalViewer
                 SetText = SetTextThreadSafe,
                 GetText = GetTextThreadSafe,
                 GetCaptureRegion = () => _config.capture_region,
-                GetRegisteredAppPath = GetRegisteredAppPath
+                GetRegisteredAppPath = (n) => _config.registered_apps.TryGetValue(n.ToString(), out string p) ? p : null,
+                ActivateWindow = RestoreWindow,
+                GetHostedFilePath = () => _hostedFilePath,
+                OnFileUploaded = OnFileUploaded
             };
 
             _server = new HttpServer(_capture, callbacks);
@@ -249,18 +255,11 @@ namespace BidirectionalViewer
             {
                 Logger.LogException("StartServer", ex);
                 _statusLabel.Text = "サーバー起動失敗（error.log参照）";
-                MessageBox.Show(
-                    "HTTPサーバーの起動に失敗しました。\n" +
-                    "管理者権限での実行、ポート5000の空き、ファイアウォール設定を確認してください。\n\n" +
-                    ex.Message,
-                    "起動エラー",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
+                MessageBox.Show("HTTPサーバーの起動に失敗しました。\n" + ex.Message, "起動エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        // ---- スレッドセーフなGUIアクセス（HTTPスレッドから呼ばれる）----
-
+        // ---- スレッドセーフなコールバック群 ----
         private void SetTextThreadSafe(string text)
         {
             if (_textArea.InvokeRequired)
@@ -270,31 +269,30 @@ namespace BidirectionalViewer
             }
             _textArea.Text = text ?? string.Empty;
             FlashTextAreaGreen();
+            RestoreWindow(); // 受信時に最前面へ
         }
 
         private string GetTextThreadSafe()
         {
-            if (_textArea.InvokeRequired)
-            {
-                return (string)_textArea.Invoke(new Func<string>(GetTextThreadSafe));
-            }
+            if (_textArea.InvokeRequired) return (string)_textArea.Invoke(new Func<string>(GetTextThreadSafe));
             return _textArea.Text;
         }
 
-        private string GetRegisteredAppPath(int number)
+        private void OnFileUploaded(string filename, byte[] data)
         {
-            string key = number.ToString();
-            string path;
-            if (_config.registered_apps.TryGetValue(key, out path))
+            if (this.InvokeRequired)
             {
-                return path;
+                this.Invoke(new Action<string, byte[]>(OnFileUploaded), filename, data);
+                return;
             }
-            return null;
+            _receivedFileName = filename;
+            _receivedFileData = data;
+            _lblReceivedFile.Text = filename;
+            _btnSaveReceived.Enabled = true;
+            FlashTextAreaGreen();
+            RestoreWindow(); // ファイル受信時にも最前面へ
         }
 
-        /// <summary>
-        /// 受信成功・送信成功時にテキストボックスの背景色を0.5秒間グリーンに点灯させる。
-        /// </summary>
         private void FlashTextAreaGreen()
         {
             if (_textArea.InvokeRequired)
@@ -302,61 +300,37 @@ namespace BidirectionalViewer
                 _textArea.Invoke(new Action(FlashTextAreaGreen));
                 return;
             }
-
             _textArea.BackColor = Color.LightGreen;
-
-            if (_bgFlashTimer != null)
-            {
-                _bgFlashTimer.Stop();
-                _bgFlashTimer.Dispose();
-            }
-
+            if (_bgFlashTimer != null) { _bgFlashTimer.Stop(); _bgFlashTimer.Dispose(); }
             _bgFlashTimer = new Timer();
             _bgFlashTimer.Interval = 500;
             _bgFlashTimer.Tick += (s, e) =>
             {
                 _textArea.BackColor = SystemColors.Window;
-                if (_bgFlashTimer != null)
-                {
-                    _bgFlashTimer.Stop();
-                    _bgFlashTimer.Dispose();
-                    _bgFlashTimer = null;
-                }
+                if (_bgFlashTimer != null) { _bgFlashTimer.Stop(); _bgFlashTimer.Dispose(); _bgFlashTimer = null; }
             };
             _bgFlashTimer.Start();
         }
 
-        // ---- ボタン動作 ----
-
+        // ---- ボタン動作・ファイル処理 ----
         private async void OnSend()
         {
             string textToSend = _textArea.Text;
             _btnSend.Enabled = false;
-
             try
             {
-                // GUIスレッドのフリーズ（デッドロック）を防止するため、HTTP通信を非同期で実行
                 int statusCode = 0;
                 await Task.Run(() =>
                 {
-                    var payload = new System.Web.Script.Serialization.JavaScriptSerializer()
-                        .Serialize(new Dictionary<string, object> { { "text", textToSend } });
+                    var payload = new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(new Dictionary<string, object> { { "text", textToSend } });
                     byte[] data = Encoding.UTF8.GetBytes(payload);
-
                     var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:5000/input");
                     req.Method = "POST";
                     req.ContentType = "application/json; charset=utf-8";
                     req.ContentLength = data.Length;
-                    using (var stream = req.GetRequestStream())
-                    {
-                        stream.Write(data, 0, data.Length);
-                    }
-                    using (var resp = (HttpWebResponse)req.GetResponse())
-                    {
-                        statusCode = (int)resp.StatusCode;
-                    }
+                    using (var stream = req.GetRequestStream()) { stream.Write(data, 0, data.Length); }
+                    using (var resp = (HttpWebResponse)req.GetResponse()) { statusCode = (int)resp.StatusCode; }
                 });
-
                 _statusLabel.Text = "送信完了: " + statusCode;
                 FlashTextAreaGreen();
             }
@@ -365,76 +339,64 @@ namespace BidirectionalViewer
                 Logger.LogException("OnSend", ex);
                 _statusLabel.Text = "送信失敗（error.log参照）";
             }
-            finally
+            finally { _btnSend.Enabled = true; }
+        }
+
+        private void OnCopy() { if (!string.IsNullOrEmpty(_textArea.Text)) Clipboard.SetText(_textArea.SelectionLength > 0 ? _textArea.SelectedText : _textArea.Text); }
+        private void OnPaste() { if (Clipboard.ContainsText()) { int p = _textArea.SelectionStart; string c = Clipboard.GetText(); _textArea.Text = _textArea.Text.Insert(p, c); _textArea.SelectionStart = p + c.Length; } }
+        private void OnDelete() { if (_textArea.SelectionLength > 0) _textArea.Text = _textArea.Text.Remove(_textArea.SelectionStart, _textArea.SelectionLength); else _textArea.Clear(); }
+
+        private void OnHostFile()
+        {
+            using (var dlg = new OpenFileDialog())
             {
-                _btnSend.Enabled = true;
+                dlg.Title = "公開するファイルを選択 (スマホからDL可能になります)";
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                {
+                    _hostedFilePath = dlg.FileName;
+                    _lblHostedFile.Text = Path.GetFileName(_hostedFilePath);
+                }
             }
         }
 
-        private void OnCopy()
+        private void OnSaveReceivedFile()
         {
-            string text = _textArea.SelectionLength > 0 ? _textArea.SelectedText : _textArea.Text;
-            if (!string.IsNullOrEmpty(text))
+            if (_receivedFileData == null || string.IsNullOrEmpty(_receivedFileName)) return;
+            using (var dlg = new SaveFileDialog())
             {
-                Clipboard.SetText(text);
+                dlg.FileName = _receivedFileName;
+                dlg.Title = "受信ファイルの保存";
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                {
+                    try
+                    {
+                        File.WriteAllBytes(dlg.FileName, _receivedFileData);
+                        MessageBox.Show("保存しました。", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        _receivedFileData = null;
+                        _receivedFileName = null;
+                        _lblReceivedFile.Text = "なし";
+                        _btnSaveReceived.Enabled = false;
+                    }
+                    catch (Exception ex) { MessageBox.Show("保存エラー: " + ex.Message, "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+                }
             }
         }
 
-        private void OnPaste()
+        private void OnSave(string ext)
         {
-            if (Clipboard.ContainsText())
-            {
-                string clip = Clipboard.GetText();
-                int pos = _textArea.SelectionStart;
-                int len = _textArea.SelectionLength;
-                string current = _textArea.Text;
-                _textArea.Text = current.Substring(0, pos) + clip + current.Substring(pos + len);
-                _textArea.SelectionStart = pos + clip.Length;
-                _textArea.SelectionLength = 0;
-            }
-        }
-
-        private void OnDelete()
-        {
-            if (_textArea.SelectionLength > 0)
-            {
-                int pos = _textArea.SelectionStart;
-                string current = _textArea.Text;
-                _textArea.Text = current.Remove(pos, _textArea.SelectionLength);
-                _textArea.SelectionStart = pos;
-            }
-            else
-            {
-                _textArea.Clear();
-            }
-        }
-
-        private void OnSave(string extension)
-        {
-            List<string> history = extension == ".py" ? _config.history_py : _config.history_txt;
-
-            using (var dlg = new SaveDialogForm(extension, history))
+            var history = ext == ".py" ? _config.history_py : _config.history_txt;
+            using (var dlg = new SaveDialogForm(ext, history))
             {
                 if (dlg.ShowDialog(this) == DialogResult.OK)
                 {
-                    string path = dlg.SelectedPath;
                     try
                     {
-                        // BOMなしUTF-8で保存
-                        File.WriteAllText(path, _textArea.Text, new UTF8Encoding(false));
-                        AppConfig.AddHistory(history, path);
+                        File.WriteAllText(dlg.SelectedPath, _textArea.Text, new UTF8Encoding(false));
+                        AppConfig.AddHistory(history, dlg.SelectedPath);
                         _config.Save();
-                        _statusLabel.Text = "保存完了: " + path;
+                        _statusLabel.Text = "保存完了: " + dlg.SelectedPath;
                     }
-                    catch (Exception ex)
-                    {
-                        Logger.LogException("OnSave", ex);
-                        MessageBox.Show(
-                            "保存に失敗しました。\n" + ex.Message,
-                            "保存エラー",
-                            MessageBoxButtons.OK,
-                            MessageBoxIcon.Error);
-                    }
+                    catch (Exception ex) { MessageBox.Show("保存エラー: " + ex.Message, "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error); }
                 }
             }
         }
@@ -454,11 +416,7 @@ namespace BidirectionalViewer
                     }
                 }
             }
-            finally
-            {
-                this.Show();
-                this.Activate();
-            }
+            finally { this.Show(); this.Activate(); }
         }
 
         private void OnRegisterApp(int number)
@@ -477,29 +435,19 @@ namespace BidirectionalViewer
         }
 
         // ---- 終了処理 ----
-
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
             try
             {
-                // ウィンドウ位置を確実に保存（最小化・最大化時は通常位置を使う）
-                Point loc = this.WindowState == FormWindowState.Normal
-                    ? this.Location
-                    : this.RestoreBounds.Location;
+                Point loc = this.WindowState == FormWindowState.Normal ? this.Location : this.RestoreBounds.Location;
                 _config.window_location = new WindowLocation { X = loc.X, Y = loc.Y };
                 _config.Save();
             }
-            catch (Exception ex)
-            {
-                Logger.LogException("FormClosing", ex);
-            }
+            catch (Exception ex) { Logger.LogException("FormClosing", ex); }
             finally
             {
-                if (_bgFlashTimer != null)
-                {
-                    _bgFlashTimer.Stop();
-                    _bgFlashTimer.Dispose();
-                }
+                if (_notifyIcon != null) { _notifyIcon.Dispose(); }
+                if (_bgFlashTimer != null) { _bgFlashTimer.Stop(); _bgFlashTimer.Dispose(); }
                 if (_server != null) _server.Dispose();
                 if (_capture != null) _capture.Dispose();
             }
