@@ -19,11 +19,15 @@ namespace BidirectionalViewer
 
             if (!createdNew)
             {
-                MessageBox.Show(
-                    "双方向メッセージビューアは既に起動しています。",
-                    "多重起動の防止",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                // 既に起動している場合、既存プロセスのHTTPサーバーに復帰を要求
+                try
+                {
+                    using (var client = new System.Net.WebClient())
+                    {
+                        client.DownloadString("http://127.0.0.1:5000/activate");
+                    }
+                }
+                catch { }
                 return;
             }
 
@@ -32,7 +36,6 @@ namespace BidirectionalViewer
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
-                // 未処理例外をログに記録
                 AppDomain.CurrentDomain.UnhandledException += (s, e) =>
                 {
                     Logger.LogException("UnhandledException", e.ExceptionObject as Exception);
