@@ -58,10 +58,23 @@ namespace BidirectionalViewer
             this.StartPosition = FormStartPosition.Manual;
             this.MinimumSize = new Size(580, 400);
 
+            // 実行ファイルに埋め込まれたアイコンを取得して適用
+            Icon appIcon = null;
+            try
+            {
+                appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            }
+            catch
+            {
+                appIcon = SystemIcons.Application; // 取得失敗時のフォールバック
+            }
+
+            this.Icon = appIcon;
+
             // NotifyIcon (タスクトレイ)
             _notifyIcon = new NotifyIcon
             {
-                Icon = SystemIcons.Application,
+                Icon = appIcon,
                 Visible = true,
                 Text = "双方向メッセージビューア"
             };
