@@ -118,7 +118,7 @@ namespace BidirectionalViewer
             }
         }
 
-        // ---- 静的ファイル（PWA用）配信 ----
+// ---- 静的ファイル（PWA用）配信 ----
         private void ServeStaticFile(HttpListenerResponse res, string path)
         {
             if (path == "/") path = "/index.html";
@@ -128,11 +128,10 @@ namespace BidirectionalViewer
 
             if (!Directory.Exists(webDir))
             {
-                SendError(res, 404, "PWA directory 'web' not found. Please create 'web' folder and put index.html.");
+                SendError(res, 404, "PWA directory 'web' not found.");
                 return;
             }
 
-            // パストラバーサル攻撃を防止
             string safePath = path.Replace("/", "\\").TrimStart('\\');
             string filePath = Path.GetFullPath(Path.Combine(webDir, safePath));
 
@@ -147,12 +146,25 @@ namespace BidirectionalViewer
                 byte[] data = File.ReadAllBytes(filePath);
                 res.StatusCode = 200;
 
+                // ★重要: 古いキャッシュが読み込まれるのを防ぐ
+                res.AddHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+                res.AddHeader("Pragma", "no-cache");
+                res.AddHeader("Expires", "0");
+
                 string ext = Path.GetExtension(filePath).ToLower();
+                string fileName = Path.GetFileName(filePath).ToLower();
+
                 switch (ext)
                 {
                     case ".html": res.ContentType = "text/html; charset=utf-8"; break;
                     case ".js": res.ContentType = "application/javascript; charset=utf-8"; break;
-                    case ".json": res.ContentType = "application/json; charset=utf-8"; break;
+                    case ".json":
+                        // ★重要: manifestの場合は専用のMIMEタイプを返す
+                        if (fileName == "manifest.json" || fileName == "manifest.webmanifest")
+                            res.ContentType = "application/manifest+json; charset=utf-8";
+                        else
+                            res.ContentType = "application/json; charset=utf-8"; 
+                        break;
                     case ".png": res.ContentType = "image/png"; break;
                     case ".ico": res.ContentType = "image/x-icon"; break;
                     default: res.ContentType = "application/octet-stream"; break;
