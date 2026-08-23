@@ -1,4 +1,4 @@
-// File: AppConfig.cs
+// File: BidirectionalViewer/AppConfig.cs
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -7,9 +7,6 @@ using System.Web.Script.Serialization;
 
 namespace BidirectionalViewer
 {
-    /// <summary>
-    /// %APPDATA%\BidirectionalViewer 配下のパスを一元管理する。
-    /// </summary>
     internal static class AppPaths
     {
         public static string BaseDir
@@ -38,9 +35,6 @@ namespace BidirectionalViewer
         }
     }
 
-    /// <summary>
-    /// エラーログをファイルに追記する簡易ロガー。
-    /// </summary>
     internal static class Logger
     {
         private static readonly object _lock = new object();
@@ -58,7 +52,6 @@ namespace BidirectionalViewer
             }
             catch
             {
-                // ログ失敗は握りつぶす
             }
         }
 
@@ -75,24 +68,17 @@ namespace BidirectionalViewer
                 }
                 catch
                 {
-                    // ログ失敗は握りつぶす
                 }
             }
         }
     }
 
-    /// <summary>
-    /// ウィンドウ位置。
-    /// </summary>
     public class WindowLocation
     {
         public int X { get; set; }
         public int Y { get; set; }
     }
 
-    /// <summary>
-    /// config.json にマッピングされる設定オブジェクト。
-    /// </summary>
     public class AppConfig
     {
         public List<string> history_txt { get; set; }
@@ -100,22 +86,20 @@ namespace BidirectionalViewer
         public WindowLocation window_location { get; set; }
         public int[] capture_region { get; set; }
         public Dictionary<string, string> registered_apps { get; set; }
+        public Dictionary<string, bool> app_communicate { get; set; }
 
         public AppConfig()
         {
-            // 欠損時フォールバック用のデフォルト値
             history_txt = new List<string>();
             history_py = new List<string>();
-            window_location = null;      // null の場合は既定位置
-            capture_region = null;       // null の場合は未設定
+            window_location = null;
+            capture_region = null;
             registered_apps = new Dictionary<string, string>();
+            app_communicate = new Dictionary<string, bool>();
         }
 
         private static readonly object _saveLock = new object();
 
-        /// <summary>
-        /// config.json を読み込む。存在しない・壊れている場合はデフォルトを返す。
-        /// </summary>
         public static AppConfig Load()
         {
             try
@@ -134,7 +118,6 @@ namespace BidirectionalViewer
                 var serializer = new JavaScriptSerializer();
                 var loaded = serializer.Deserialize<AppConfig>(json);
 
-                // 旧フォーマット・欠損キーのフォールバック
                 if (loaded == null)
                 {
                     return new AppConfig();
@@ -142,8 +125,8 @@ namespace BidirectionalViewer
                 if (loaded.history_txt == null) loaded.history_txt = new List<string>();
                 if (loaded.history_py == null) loaded.history_py = new List<string>();
                 if (loaded.registered_apps == null) loaded.registered_apps = new Dictionary<string, string>();
+                if (loaded.app_communicate == null) loaded.app_communicate = new Dictionary<string, bool>();
 
-                // capture_region が不正長なら未設定扱い
                 if (loaded.capture_region != null && loaded.capture_region.Length != 4)
                 {
                     loaded.capture_region = null;
@@ -158,9 +141,6 @@ namespace BidirectionalViewer
             }
         }
 
-        /// <summary>
-        /// config.json へ保存する。
-        /// </summary>
         public void Save()
         {
             lock (_saveLock)
@@ -169,7 +149,6 @@ namespace BidirectionalViewer
                 {
                     var serializer = new JavaScriptSerializer();
                     string json = serializer.Serialize(this);
-                    // 可読性のため軽く整形（任意）
                     File.WriteAllText(AppPaths.ConfigFile, json, new UTF8Encoding(false));
                 }
                 catch (Exception ex)
@@ -179,9 +158,6 @@ namespace BidirectionalViewer
             }
         }
 
-        /// <summary>
-        /// 履歴リストへ追加（最新を先頭、重複削除、最大10件）。
-        /// </summary>
         public static void AddHistory(List<string> list, string path)
         {
             if (list == null || string.IsNullOrEmpty(path)) return;
