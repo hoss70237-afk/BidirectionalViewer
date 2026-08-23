@@ -513,15 +513,34 @@ namespace BidirectionalViewer
             }
         }
 
-        // AutoHotkey の実行ファイルを探す（v2ではなく、統合ランチャーやv1を優先）
+        // AutoHotkey の実行ファイルをレジストリ等から確実に探す
         private string FindAutoHotkeyExe()
         {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\AutoHotkey"))
+                {
+                    if (key != null)
+                    {
+                        string dir = key.GetValue("InstallDir") as string;
+                        if (!string.IsNullOrEmpty(dir))
+                        {
+                            string exe = Path.Combine(dir, "AutoHotkey.exe");
+                            if (File.Exists(exe)) return exe;
+                        }
+                    }
+                }
+            }
+            catch { }
+
             string[] possiblePaths = {
-                @"C:\Program Files\AutoHotkey\AutoHotkey.exe", // 統合ランチャーを最優先（#Requires を解釈）
+                @"C:\Program Files\AutoHotkey\AutoHotkey.exe",
                 @"C:\Program Files\AutoHotkey\AutoHotkeyU64.exe",
                 @"C:\Program Files\AutoHotkey\AutoHotkeyU32.exe",
-                @"C:\Program Files\AutoHotkey\AutoHotkeyA32.exe"
+                @"C:\Program Files (x86)\AutoHotkey\AutoHotkey.exe",
+                Environment.ExpandEnvironmentVariables(@"%LOCALAPPDATA%\Programs\AutoHotkey\AutoHotkey.exe")
             };
+            
             foreach (var path in possiblePaths)
             {
                 if (File.Exists(path)) return path;
@@ -547,6 +566,7 @@ namespace BidirectionalViewer
                     string ahkExe = FindAutoHotkeyExe();
                     if (!string.IsNullOrEmpty(ahkExe))
                     {
+                        // AutoHotkey.exe を直接叩くため、関連付けの不備に依存せず確実に引数が渡る
                         psi.FileName = ahkExe;
                         psi.Arguments = string.Format("\"{0}\" \"{1}\" \"{2}\"", exePath, tempIn, tempOut);
                         psi.UseShellExecute = false;
@@ -554,6 +574,7 @@ namespace BidirectionalViewer
                     }
                     else
                     {
+                        // AHK本体が見つからない場合は関連付けに頼る
                         psi.FileName = exePath;
                         psi.Arguments = string.Format("\"{0}\" \"{1}\"", tempIn, tempOut);
                         psi.UseShellExecute = true;
@@ -561,9 +582,11 @@ namespace BidirectionalViewer
                 }
                 else
                 {
+                    // .exe や .bat などの場合
                     psi.FileName = exePath;
                     psi.Arguments = string.Format("\"{0}\" \"{1}\"", tempIn, tempOut);
-                    psi.UseShellExecute = true;
+                    psi.UseShellExecute = false;
+                    psi.CreateNoWindow = true;
                 }
                 
                 using (var proc = Process.Start(psi))
