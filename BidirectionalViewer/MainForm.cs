@@ -513,6 +513,24 @@ namespace BidirectionalViewer
             }
         }
 
+        // AutoHotkey の実行ファイルの場所をいくつか探す
+        private string FindAutoHotkeyExe()
+        {
+            string[] possiblePaths = {
+                @"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe",
+                @"C:\Program Files\AutoHotkey\v2\AutoHotkey32.exe",
+                @"C:\Program Files\AutoHotkey\AutoHotkeyU64.exe",
+                @"C:\Program Files\AutoHotkey\AutoHotkeyU32.exe",
+                @"C:\Program Files\AutoHotkey\AutoHotkeyA32.exe",
+                @"C:\Program Files\AutoHotkey\AutoHotkey.exe"
+            };
+            foreach (var path in possiblePaths)
+            {
+                if (File.Exists(path)) return path;
+            }
+            return null;
+        }
+
         private void RunAppWithCommunication(string exePath, string inputText)
         {
             string tempIn = null;
@@ -524,13 +542,34 @@ namespace BidirectionalViewer
                 
                 File.WriteAllText(tempIn, inputText, new UTF8Encoding(false));
                 
-                var psi = new ProcessStartInfo
+                var psi = new ProcessStartInfo();
+                
+                // .ahkファイルが指定された場合、Windowsの関連付け仕様で引数が消えるのを防ぐため、
+                // AutoHotkey.exe を直接呼び出す
+                if (exePath.EndsWith(".ahk", StringComparison.OrdinalIgnoreCase))
                 {
-                    FileName = exePath,
-                    Arguments = string.Format("\"{0}\" \"{1}\"", tempIn, tempOut),
-                    UseShellExecute = true,
-                    CreateNoWindow = false
-                };
+                    string ahkExe = FindAutoHotkeyExe();
+                    if (!string.IsNullOrEmpty(ahkExe))
+                    {
+                        psi.FileName = ahkExe;
+                        psi.Arguments = string.Format("\"{0}\" \"{1}\" \"{2}\"", exePath, tempIn, tempOut);
+                        psi.UseShellExecute = false;
+                        psi.CreateNoWindow = true;
+                    }
+                    else
+                    {
+                        // 見つからない場合は関連付けに任せる（ユーザーが exe 化していることを期待）
+                        psi.FileName = exePath;
+                        psi.Arguments = string.Format("\"{0}\" \"{1}\"", tempIn, tempOut);
+                        psi.UseShellExecute = true;
+                    }
+                }
+                else
+                {
+                    psi.FileName = exePath;
+                    psi.Arguments = string.Format("\"{0}\" \"{1}\"", tempIn, tempOut);
+                    psi.UseShellExecute = true;
+                }
                 
                 using (var proc = Process.Start(psi))
                 {
