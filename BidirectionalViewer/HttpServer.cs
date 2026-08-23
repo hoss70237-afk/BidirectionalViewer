@@ -1,4 +1,4 @@
-// File: HttpServer.cs
+// File: BidirectionalViewer/HttpServer.cs
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -15,13 +15,9 @@ namespace BidirectionalViewer
         public Action<string> SetText;
         public Func<string> GetText;
         public Func<int[]> GetCaptureRegion;
-        public Func<int, string> GetRegisteredAppPath;
-        
-        // ウィンドウを最前面に呼び出す
+        public Action<int> LaunchRegisteredApp;
         public Action ActivateWindow;
-        // 公開中のファイルパスを取得
         public Func<string> GetHostedFilePath;
-        // スマホからアップロードされたファイルを受け取る
         public Action<string, byte[]> OnFileUploaded;
     }
 
@@ -34,7 +30,6 @@ namespace BidirectionalViewer
         private readonly ScreenCaptureManager _capture;
         private readonly ServerCallbacks _callbacks;
         
-        // 大きなファイルも受け取れるようMaxJsonLengthを最大化
         private readonly JavaScriptSerializer _serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
         private Thread _listenThread;
         private volatile bool _running;
@@ -286,18 +281,14 @@ namespace BidirectionalViewer
                 return;
             }
             int number = ToInt(body["app_number"]);
-            string path = _callbacks.GetRegisteredAppPath != null ? _callbacks.GetRegisteredAppPath(number) : null;
-            if (string.IsNullOrEmpty(path)) { SendError(res, 400, "app not registered"); return; }
-            if (!File.Exists(path)) { SendError(res, 404, "app file not found"); return; }
-            try
+            if (_callbacks.LaunchRegisteredApp != null)
             {
-                Process.Start(path);
+                _callbacks.LaunchRegisteredApp(number);
                 SendJson(res, 200, new Dictionary<string, object> { { "status", "ok" } });
             }
-            catch (Exception ex)
+            else
             {
-                Logger.LogException("HandleLaunchApp", ex);
-                SendError(res, 500, "failed to start process");
+                SendError(res, 500, "app launch callback not registered");
             }
         }
 
