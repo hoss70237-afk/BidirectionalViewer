@@ -513,16 +513,14 @@ namespace BidirectionalViewer
             }
         }
 
-        // AutoHotkey の実行ファイルの場所をいくつか探す
+        // AutoHotkey の実行ファイルを探す（v2ではなく、統合ランチャーやv1を優先）
         private string FindAutoHotkeyExe()
         {
             string[] possiblePaths = {
-                @"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe",
-                @"C:\Program Files\AutoHotkey\v2\AutoHotkey32.exe",
+                @"C:\Program Files\AutoHotkey\AutoHotkey.exe", // 統合ランチャーを最優先（#Requires を解釈）
                 @"C:\Program Files\AutoHotkey\AutoHotkeyU64.exe",
                 @"C:\Program Files\AutoHotkey\AutoHotkeyU32.exe",
-                @"C:\Program Files\AutoHotkey\AutoHotkeyA32.exe",
-                @"C:\Program Files\AutoHotkey\AutoHotkey.exe"
+                @"C:\Program Files\AutoHotkey\AutoHotkeyA32.exe"
             };
             foreach (var path in possiblePaths)
             {
@@ -544,8 +542,6 @@ namespace BidirectionalViewer
                 
                 var psi = new ProcessStartInfo();
                 
-                // .ahkファイルが指定された場合、Windowsの関連付け仕様で引数が消えるのを防ぐため、
-                // AutoHotkey.exe を直接呼び出す
                 if (exePath.EndsWith(".ahk", StringComparison.OrdinalIgnoreCase))
                 {
                     string ahkExe = FindAutoHotkeyExe();
@@ -558,7 +554,6 @@ namespace BidirectionalViewer
                     }
                     else
                     {
-                        // 見つからない場合は関連付けに任せる（ユーザーが exe 化していることを期待）
                         psi.FileName = exePath;
                         psi.Arguments = string.Format("\"{0}\" \"{1}\"", tempIn, tempOut);
                         psi.UseShellExecute = true;
