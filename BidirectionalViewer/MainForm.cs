@@ -1,6 +1,7 @@
-// File: MainForm.cs
+// File: BidirectionalViewer/MainForm.cs
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Net;
@@ -20,7 +21,6 @@ namespace BidirectionalViewer
         private Button _btnSelectRegion, _btnAppToggle;
         private Button[] _appButtons;
         
-        // ファイル送受信関連
         private Button _btnHostFile, _btnHostFileClear, _btnSaveReceived;
         private Label _lblHostedFile, _lblReceivedFile;
         private string _hostedFilePath;
@@ -49,62 +49,38 @@ namespace BidirectionalViewer
             this.Resize += MainForm_Resize;
         }
 
-        // ---- UI構築 ----
         private void InitializeUi()
         {
             this.Text = "双方向メッセージビューア";
             this.Width = 640;
-            this.Height = 440; // 初期状態（アプリパネル非表示）の高さ
+            this.Height = 440; 
             this.StartPosition = FormStartPosition.Manual;
             this.MinimumSize = new Size(580, 400);
 
-            // 実行ファイルに埋め込まれたアイコンを取得して適用
             Icon appIcon = null;
-            try
-            {
-                appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            }
-            catch
-            {
-                appIcon = SystemIcons.Application; // 取得失敗時のフォールバック
-            }
-
+            try { appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+            catch { appIcon = SystemIcons.Application; }
             this.Icon = appIcon;
 
-            // NotifyIcon (タスクトレイ)
-            _notifyIcon = new NotifyIcon
-            {
-                Icon = appIcon,
-                Visible = true,
-                Text = "双方向メッセージビューア"
-            };
+            _notifyIcon = new NotifyIcon { Icon = appIcon, Visible = true, Text = "双方向メッセージビューア" };
             _notifyIcon.DoubleClick += (s, e) => RestoreWindow();
 
-            // テキストエリア
             _textArea = new TextBox
             {
-                Multiline = true,
-                ScrollBars = ScrollBars.Vertical,
-                AcceptsReturn = true,
-                AcceptsTab = true,
-                WordWrap = true,
-                Location = new Point(12, 12),
-                Size = new Size(600, 240),
+                Multiline = true, ScrollBars = ScrollBars.Vertical, AcceptsReturn = true, AcceptsTab = true, WordWrap = true,
+                Location = new Point(12, 12), Size = new Size(600, 240),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
                 Font = new Font("Consolas", 10F)
             };
             this.Controls.Add(_textArea);
 
-            // 下部パネル (閉じた状態の高さ 114)
             _bottomPanel = new Panel
             {
-                Location = new Point(12, 260),
-                Size = new Size(600, 114),
+                Location = new Point(12, 260), Size = new Size(600, 114),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
             };
             this.Controls.Add(_bottomPanel);
 
-            // -- 下部パネル内の配置 --
             int by = 0;
             _btnSend    = MakeButton("送信",      0,   by, 70);
             _btnCopy    = MakeButton("コピー",     76,  by, 70);
@@ -126,7 +102,7 @@ namespace BidirectionalViewer
             _lblCaptureRegion = new Label { Text = "未設定", Location = new Point(96, by + 5), AutoSize = true };
             
             _btnAppToggle = MakeButton("アプリ設定", 414, by, 90);
-            _btnAppToggle.Click += (s, e) => ToggleAppPanel(); // サイズ自動調整メソッドを呼び出す
+            _btnAppToggle.Click += (s, e) => ToggleAppPanel();
 
             by = 76;
             _btnHostFile = MakeButton("PCファイル公開", 0, by, 110);
@@ -146,7 +122,6 @@ namespace BidirectionalViewer
             var sep = new Label { BorderStyle = BorderStyle.Fixed3D, Location = new Point(0, by), Size = new Size(600, 2), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
 
             by = 126;
-            // アプリ登録パネル (非表示)
             _appPanel = new Panel { Location = new Point(0, by), Size = new Size(600, 100), Visible = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             _lblAppTitle = new Label { Text = "アプリ登録 (スマホから起動)", Font = new Font(this.Font, FontStyle.Bold), Location = new Point(0, 0), AutoSize = true };
             _appPanel.Controls.Add(_lblAppTitle);
@@ -155,12 +130,32 @@ namespace BidirectionalViewer
             for (int i = 0; i < 6; i++)
             {
                 int number = i + 1;
-                var btn = MakeButton(number.ToString(), i * 50, 24, 42);
-                btn.Click += (s, e) => OnRegisterApp(number);
+                int bx = i * 98;
+
+                var btn = MakeButton(number.ToString(), bx, 24, 90);
+                btn.MouseDown += (s, e) => {
+                    if (e.Button == MouseButtons.Right) {
+                        OnRegisterApp(number);
+                    } else if (e.Button == MouseButtons.Left) {
+                        OnLaunchApp(number);
+                    }
+                };
+
+                var chk = new CheckBox { Text = "通信", Location = new Point(bx, 54), Size = new Size(60, 20), Cursor = Cursors.Hand };
+                if (_config.app_communicate.ContainsKey(number.ToString()))
+                {
+                    chk.Checked = _config.app_communicate[number.ToString()];
+                }
+                chk.CheckedChanged += (s, e) => {
+                    _config.app_communicate[number.ToString()] = chk.Checked;
+                    _config.Save();
+                };
+
                 _appButtons[i] = btn;
                 _appPanel.Controls.Add(btn);
+                _appPanel.Controls.Add(chk);
             }
-            _lblAppStatus = new Label { Text = "(未登録)", Location = new Point(0, 60), Size = new Size(600, 40), AutoEllipsis = true, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            _lblAppStatus = new Label { Text = "(未登録)", Location = new Point(0, 76), Size = new Size(600, 24), AutoEllipsis = true, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             _appPanel.Controls.Add(_lblAppStatus);
 
             _bottomPanel.Controls.AddRange(new Control[] {
@@ -170,7 +165,6 @@ namespace BidirectionalViewer
                 sep, _appPanel
             });
 
-            // ステータスバー
             _statusStrip = new StatusStrip();
             _statusLabel = new ToolStripStatusLabel("サーバー準備中...");
             _statusStrip.Items.Add(_statusLabel);
@@ -182,14 +176,12 @@ namespace BidirectionalViewer
             return new Button { Text = text, Location = new Point(x, y), Size = new Size(w, 28) };
         }
 
-        // アプリパネル表示/非表示時のウィンドウサイズ伸縮
         private void ToggleAppPanel()
         {
-            // サイズ変更時にTextBoxが追従して伸び縮みしないように、一時的にBottomアンカーを外す
             _textArea.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             _bottomPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 
-            int adjustHeight = 112; // アプリパネルの高さ分
+            int adjustHeight = 112;
 
             if (!_appPanel.Visible)
             {
@@ -204,12 +196,10 @@ namespace BidirectionalViewer
                 _bottomPanel.Height -= adjustHeight;
             }
 
-            // アンカーを元に戻す
             _textArea.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
             _bottomPanel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         }
 
-        // ---- 最小化時・復帰処理 ----
         private void MainForm_Resize(object sender, EventArgs e)
         {
             if (this.WindowState == FormWindowState.Minimized)
@@ -235,7 +225,6 @@ namespace BidirectionalViewer
             this.TopMost = false;
         }
 
-        // ---- config反映 ----
         private void ApplyConfigToUi()
         {
             if (_config.window_location != null)
@@ -269,12 +258,12 @@ namespace BidirectionalViewer
             {
                 string key = i.ToString();
                 if (_config.registered_apps.ContainsKey(key) && !string.IsNullOrEmpty(_config.registered_apps[key]))
-                    sb.Append(string.Format("{0}: {1}  ", i, Path.GetFileName(_config.registered_apps[key])));
+                    sb.Append(string.Format("{0}:{1}  ", i, Path.GetFileName(_config.registered_apps[key])));
             }
-            _lblAppStatus.Text = sb.Length > 0 ? sb.ToString().TrimEnd() : "(未登録)";
+            string prefix = "[左:起動 / 右:登録] ";
+            _lblAppStatus.Text = sb.Length > 0 ? prefix + sb.ToString().TrimEnd() : prefix + "(未登録)";
         }
 
-        // ---- HTTPサーバー起動 ----
         private void StartServer()
         {
             var callbacks = new ServerCallbacks
@@ -282,7 +271,7 @@ namespace BidirectionalViewer
                 SetText = SetTextThreadSafe,
                 GetText = GetTextThreadSafe,
                 GetCaptureRegion = () => _config.capture_region,
-                GetRegisteredAppPath = (n) => _config.registered_apps.TryGetValue(n.ToString(), out string p) ? p : null,
+                LaunchRegisteredApp = OnLaunchApp,
                 ActivateWindow = RestoreWindow,
                 GetHostedFilePath = () => _hostedFilePath,
                 OnFileUploaded = OnFileUploaded
@@ -302,7 +291,6 @@ namespace BidirectionalViewer
             }
         }
 
-        // ---- スレッドセーフなコールバック群 ----
         private void SetTextThreadSafe(string text)
         {
             if (_textArea.InvokeRequired)
@@ -310,16 +298,27 @@ namespace BidirectionalViewer
                 _textArea.Invoke(new Action<string>(SetTextThreadSafe), text);
                 return;
             }
-
-            if (text != null)
-            {
-                // スマホからの改行(\n)をWindows標準の改行(\r\n)に統一し、正しく改行表示させる
-                text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
-            }
+            if (text != null) text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
             _textArea.Text = text ?? string.Empty;
 
             FlashTextAreaGreen();
-            RestoreWindow(); // 受信時に最前面へ
+            RestoreWindow();
+        }
+
+        private void AppendTextThreadSafe(string appendText)
+        {
+            if (_textArea.InvokeRequired)
+            {
+                _textArea.Invoke(new Action<string>(AppendTextThreadSafe), appendText);
+                return;
+            }
+            if (!string.IsNullOrEmpty(appendText))
+            {
+                appendText = appendText.Replace("\r\n", "\n").Replace("\n", "\r\n");
+                _textArea.AppendText(appendText);
+                FlashTextAreaGreen();
+                RestoreWindow();
+            }
         }
 
         private string GetTextThreadSafe()
@@ -340,7 +339,7 @@ namespace BidirectionalViewer
             _lblReceivedFile.Text = filename;
             _btnSaveReceived.Enabled = true;
             FlashTextAreaGreen();
-            RestoreWindow(); // ファイル受信時にも最前面へ
+            RestoreWindow();
         }
 
         private void FlashTextAreaGreen()
@@ -362,7 +361,6 @@ namespace BidirectionalViewer
             _bgFlashTimer.Start();
         }
 
-        // ---- ボタン動作・ファイル処理 ----
         private async void OnSend()
         {
             string textToSend = _textArea.Text;
@@ -473,7 +471,7 @@ namespace BidirectionalViewer
         {
             using (var dlg = new OpenFileDialog())
             {
-                dlg.Filter = "実行可能ファイル (*.exe;*.bat;*.cmd;*.lnk)|*.exe;*.bat;*.cmd;*.lnk|すべてのファイル (*.*)|*.*";
+                dlg.Filter = "実行可能ファイル/スクリプト (*.exe;*.bat;*.cmd;*.lnk;*.ahk;*.py)|*.exe;*.bat;*.cmd;*.lnk;*.ahk;*.py|すべてのファイル (*.*)|*.*";
                 dlg.Title = string.Format("アプリ {0} を登録", number);
                 if (dlg.ShowDialog(this) == DialogResult.OK)
                 {
@@ -484,7 +482,89 @@ namespace BidirectionalViewer
             }
         }
 
-        // ---- 終了処理 ----
+        private void OnLaunchApp(int number)
+        {
+            string key = number.ToString();
+            if (!_config.registered_apps.ContainsKey(key) || string.IsNullOrEmpty(_config.registered_apps[key]))
+            {
+                OnRegisterApp(number);
+                return;
+            }
+
+            string path = _config.registered_apps[key];
+            if (!File.Exists(path))
+            {
+                MessageBox.Show("ファイルが見つかりません: " + path, "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            bool communicate = _config.app_communicate.ContainsKey(key) && _config.app_communicate[key];
+
+            if (!communicate)
+            {
+                try { Process.Start(path); }
+                catch (Exception ex) { Logger.LogException("OnLaunchApp", ex); }
+            }
+            else
+            {
+                string currentText = _textArea.Text;
+                _statusLabel.Text = string.Format("アプリ {0} と通信中...", number);
+                Task.Run(() => RunAppWithCommunication(path, currentText));
+            }
+        }
+
+        private void RunAppWithCommunication(string exePath, string inputText)
+        {
+            string tempIn = null;
+            string tempOut = null;
+            try
+            {
+                tempIn = Path.GetTempFileName();
+                tempOut = Path.GetTempFileName();
+                
+                File.WriteAllText(tempIn, inputText, new UTF8Encoding(false));
+                
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exePath,
+                    Arguments = string.Format("\"{0}\" \"{1}\"", tempIn, tempOut),
+                    UseShellExecute = true,
+                    CreateNoWindow = false
+                };
+                
+                using (var proc = Process.Start(psi))
+                {
+                    if (proc != null)
+                    {
+                        proc.WaitForExit();
+                    }
+                }
+                
+                if (File.Exists(tempOut))
+                {
+                    string result = File.ReadAllText(tempOut, new UTF8Encoding(false));
+                    if (!string.IsNullOrWhiteSpace(result))
+                    {
+                        AppendTextThreadSafe("\r\n\r\n--- 応答 ---\r\n" + result);
+                    }
+                }
+                
+                if (this.InvokeRequired)
+                {
+                    this.Invoke(new Action(() => { _statusLabel.Text = "通信完了"; }));
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("RunAppWithCommunication", ex);
+            }
+            finally
+            {
+                try { if (tempIn != null && File.Exists(tempIn)) File.Delete(tempIn); } catch { }
+                try { if (tempOut != null && File.Exists(tempOut)) File.Delete(tempOut); } catch { }
+            }
+        }
+
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
             try
