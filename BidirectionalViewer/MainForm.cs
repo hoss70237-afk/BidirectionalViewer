@@ -122,7 +122,7 @@ namespace BidirectionalViewer
             var sep = new Label { BorderStyle = BorderStyle.Fixed3D, Location = new Point(0, by), Size = new Size(600, 2), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
 
             by = 126;
-            _appPanel = new Panel { Location = new Point(0, by), Size = new Size(600, 100), Visible = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            _appPanel = new Panel { Location = new Point(0, by), Size = new Size(600, 130), Visible = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             _lblAppTitle = new Label { Text = "アプリ登録 (スマホから起動)", Font = new Font(this.Font, FontStyle.Bold), Location = new Point(0, 0), AutoSize = true };
             _appPanel.Controls.Add(_lblAppTitle);
 
@@ -151,11 +151,27 @@ namespace BidirectionalViewer
                     _config.Save();
                 };
 
+                var postBtn = MakeButton("完了後...", bx, 76, 90);
+                postBtn.Font = new Font(postBtn.Font.FontFamily, 8F);
+                postBtn.MouseDown += (s, e) => {
+                    if (e.Button == MouseButtons.Left) {
+                        OnRegisterPostApp(number);
+                    } else if (e.Button == MouseButtons.Right) {
+                        if (_config.registered_post_apps.ContainsKey(number.ToString()))
+                        {
+                            _config.registered_post_apps.Remove(number.ToString());
+                            _config.Save();
+                            UpdateAppStatusLabel();
+                        }
+                    }
+                };
+
                 _appButtons[i] = btn;
                 _appPanel.Controls.Add(btn);
                 _appPanel.Controls.Add(chk);
+                _appPanel.Controls.Add(postBtn);
             }
-            _lblAppStatus = new Label { Text = "(未登録)", Location = new Point(0, 76), Size = new Size(600, 24), AutoEllipsis = true, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            _lblAppStatus = new Label { Text = "(未登録)", Location = new Point(0, 104), Size = new Size(600, 24), AutoEllipsis = true, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             _appPanel.Controls.Add(_lblAppStatus);
 
             _bottomPanel.Controls.AddRange(new Control[] {
@@ -181,7 +197,7 @@ namespace BidirectionalViewer
             _textArea.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             _bottomPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 
-            int adjustHeight = 112;
+            int adjustHeight = 140;
 
             if (!_appPanel.Visible)
             {
@@ -257,10 +273,24 @@ namespace BidirectionalViewer
             for (int i = 1; i <= 6; i++)
             {
                 string key = i.ToString();
-                if (_config.registered_apps.ContainsKey(key) && !string.IsNullOrEmpty(_config.registered_apps[key]))
-                    sb.Append(string.Format("{0}:{1}  ", i, Path.GetFileName(_config.registered_apps[key])));
+                bool hasMain = _config.registered_apps.ContainsKey(key) && !string.IsNullOrEmpty(_config.registered_apps[key]);
+                bool hasPost = _config.registered_post_apps != null && _config.registered_post_apps.ContainsKey(key) && !string.IsNullOrEmpty(_config.registered_post_apps[key]);
+
+                if (hasMain)
+                {
+                    string mainName = Path.GetFileName(_config.registered_apps[key]);
+                    if (hasPost)
+                    {
+                        string postName = Path.GetFileName(_config.registered_post_apps[key]);
+                        sb.Append(string.Format("{0}:{1}(後:{2})  ", i, mainName, postName));
+                    }
+                    else
+                    {
+                        sb.Append(string.Format("{0}:{1}  ", i, mainName));
+                    }
+                }
             }
-            string prefix = "[左:起動 / 右:登録] ";
+            string prefix = "[左:起動/登録, 完了後:左登録/右クリア] ";
             _lblAppStatus.Text = sb.Length > 0 ? prefix + sb.ToString().TrimEnd() : prefix + "(未登録)";
         }
 
@@ -334,7 +364,6 @@ namespace BidirectionalViewer
                 int index = _textArea.Text.IndexOf(oldValue);
                 if (index >= 0)
                 {
-                    // 対象のテキストを選択状態にして置換することで、スクロール位置を極力保持します
                     _textArea.Select(index, oldValue.Length);
                     if (newValue != null)
                     {
@@ -344,7 +373,6 @@ namespace BidirectionalViewer
                 }
                 else
                 {
-                    // 何らかの理由で待機マークがユーザーによって消されていた場合は、末尾に追記します
                     if (!string.IsNullOrEmpty(newValue))
                     {
                         newValue = newValue.Replace("\r\n", "\n").Replace("\n", "\r\n");
@@ -517,6 +545,24 @@ namespace BidirectionalViewer
             }
         }
 
+        private void OnRegisterPostApp(int number)
+        {
+            using (var dlg = new OpenFileDialog())
+            {
+                dlg.Filter = "実行可能ファイル/スクリプト (*.exe;*.bat;*.cmd;*.lnk;*.ahk;*.py)|*.exe;*.bat;*.cmd;*.lnk;*.ahk;*.py|すべてのファイル (*.*)|*.*";
+                dlg.Title = string.Format("アプリ {0} 完了時に起動するアプリを登録", number);
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                {
+                    if (_config.registered_post_apps == null)
+                        _config.registered_post_apps = new Dictionary<string, string>();
+                    
+                    _config.registered_post_apps[number.ToString()] = dlg.FileName;
+                    _config.Save();
+                    UpdateAppStatusLabel();
+                }
+            }
+        }
+
         private void OnLaunchApp(int number)
         {
             string key = number.ToString();
@@ -533,22 +579,31 @@ namespace BidirectionalViewer
                 return;
             }
 
+            string postPath = null;
+            if (_config.registered_post_apps != null && _config.registered_post_apps.ContainsKey(key))
+            {
+                postPath = _config.registered_post_apps[key];
+                if (!string.IsNullOrEmpty(postPath) && !File.Exists(postPath))
+                {
+                    postPath = null;
+                }
+            }
+
             bool communicate = _config.app_communicate.ContainsKey(key) && _config.app_communicate[key];
 
             if (!communicate)
             {
-                try { Process.Start(path); }
-                catch (Exception ex) { Logger.LogException("OnLaunchApp", ex); }
+                _statusLabel.Text = string.Format("アプリ {0} を起動中...", number);
+                Task.Run(() => RunApp(path, postPath));
             }
             else
             {
                 string currentText = _textArea.Text;
                 _statusLabel.Text = string.Format("アプリ {0} と通信中...", number);
-                Task.Run(() => RunAppWithCommunication(path, currentText, number));
+                Task.Run(() => RunAppWithCommunication(path, currentText, number, postPath));
             }
         }
 
-        // AutoHotkey の実行ファイルをレジストリ等から確実に探す
         private string FindAutoHotkeyExe()
         {
             try
@@ -583,9 +638,92 @@ namespace BidirectionalViewer
             return null;
         }
 
-        private void RunAppWithCommunication(string exePath, string inputText, int appNumber)
+        private void LaunchPostApp(string postAppPath)
         {
-            // 待機マークを作成し、テキストエリアに追記しておく
+            try
+            {
+                var psi = new ProcessStartInfo();
+                if (postAppPath.EndsWith(".ahk", StringComparison.OrdinalIgnoreCase))
+                {
+                    string ahkExe = FindAutoHotkeyExe();
+                    if (!string.IsNullOrEmpty(ahkExe))
+                    {
+                        psi.FileName = ahkExe;
+                        psi.Arguments = string.Format("\"{0}\"", postAppPath);
+                        psi.UseShellExecute = false;
+                    }
+                    else
+                    {
+                        psi.FileName = postAppPath;
+                        psi.UseShellExecute = true;
+                    }
+                }
+                else
+                {
+                    psi.FileName = postAppPath;
+                    psi.UseShellExecute = true;
+                }
+                
+                Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("LaunchPostApp", ex);
+            }
+        }
+
+        private void RunApp(string exePath, string postAppPath)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo();
+                if (exePath.EndsWith(".ahk", StringComparison.OrdinalIgnoreCase))
+                {
+                    string ahkExe = FindAutoHotkeyExe();
+                    if (!string.IsNullOrEmpty(ahkExe))
+                    {
+                        psi.FileName = ahkExe;
+                        psi.Arguments = string.Format("\"{0}\"", exePath);
+                        psi.UseShellExecute = false;
+                    }
+                    else
+                    {
+                        psi.FileName = exePath;
+                        psi.UseShellExecute = true;
+                    }
+                }
+                else
+                {
+                    psi.FileName = exePath;
+                    psi.UseShellExecute = true;
+                }
+
+                using (var proc = Process.Start(psi))
+                {
+                    if (proc != null && !string.IsNullOrEmpty(postAppPath))
+                    {
+                        proc.WaitForExit();
+                    }
+                }
+                
+                if (this.InvokeRequired)
+                {
+                    this.Invoke(new Action(() => { _statusLabel.Text = "アプリ終了"; }));
+                }
+
+                if (!string.IsNullOrEmpty(postAppPath))
+                {
+                    LaunchPostApp(postAppPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("RunApp", ex);
+            }
+        }
+
+        private void RunAppWithCommunication(string exePath, string inputText, int appNumber, string postAppPath)
+        {
             string appName = Path.GetFileName(exePath);
             string waitingMark = string.Format("\r\n\r\n--- アプリ {0} ({1}) 応答待ち [{2}] ---", appNumber, appName, DateTime.Now.ToString("HH:mm:ss"));
             
@@ -607,7 +745,6 @@ namespace BidirectionalViewer
                     string ahkExe = FindAutoHotkeyExe();
                     if (!string.IsNullOrEmpty(ahkExe))
                     {
-                        // AutoHotkey.exe を直接叩くため、関連付けの不備に依存せず確実に引数が渡る
                         psi.FileName = ahkExe;
                         psi.Arguments = string.Format("\"{0}\" \"{1}\" \"{2}\"", exePath, tempIn, tempOut);
                         psi.UseShellExecute = false;
@@ -615,7 +752,6 @@ namespace BidirectionalViewer
                     }
                     else
                     {
-                        // AHK本体が見つからない場合は関連付けに頼る
                         psi.FileName = exePath;
                         psi.Arguments = string.Format("\"{0}\" \"{1}\"", tempIn, tempOut);
                         psi.UseShellExecute = true;
@@ -623,7 +759,6 @@ namespace BidirectionalViewer
                 }
                 else
                 {
-                    // .exe や .bat などの場合
                     psi.FileName = exePath;
                     psi.Arguments = string.Format("\"{0}\" \"{1}\"", tempIn, tempOut);
                     psi.UseShellExecute = false;
@@ -638,29 +773,31 @@ namespace BidirectionalViewer
                     }
                 }
                 
-                string replacement = ""; // 応答がない場合は空文字にして待機マークを削除する
+                string replacement = "";
                 if (File.Exists(tempOut))
                 {
                     string result = File.ReadAllText(tempOut, new UTF8Encoding(false));
                     if (!string.IsNullOrWhiteSpace(result))
                     {
-                        // 応答があった場合、待機マークを上書きするための文字列を準備
                         replacement = string.Format("\r\n\r\n--- アプリ {0} 応答 ---\r\n{1}", appNumber, result);
                     }
                 }
                 
-                // 待機マークを応答テキスト(または空文字)に置換する
                 ReplaceTextThreadSafe(waitingMark, replacement);
                 
                 if (this.InvokeRequired)
                 {
                     this.Invoke(new Action(() => { _statusLabel.Text = "通信完了"; }));
                 }
+
+                if (!string.IsNullOrEmpty(postAppPath))
+                {
+                    LaunchPostApp(postAppPath);
+                }
             }
             catch (Exception ex)
             {
                 Logger.LogException("RunAppWithCommunication", ex);
-                // エラーが発生した場合も待機マークをエラーメッセージに置換する
                 ReplaceTextThreadSafe(waitingMark, string.Format("\r\n\r\n--- アプリ {0} 通信エラー ---", appNumber));
             }
             finally
