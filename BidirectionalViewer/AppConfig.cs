@@ -87,6 +87,7 @@ namespace BidirectionalViewer
         public int[] capture_region { get; set; }
         public Dictionary<string, string> registered_apps { get; set; }
         public Dictionary<string, bool> app_communicate { get; set; }
+        public Dictionary<string, string> registered_post_apps { get; set; }
 
         public AppConfig()
         {
@@ -96,6 +97,7 @@ namespace BidirectionalViewer
             capture_region = null;
             registered_apps = new Dictionary<string, string>();
             app_communicate = new Dictionary<string, bool>();
+            registered_post_apps = new Dictionary<string, string>();
         }
 
         private static readonly object _saveLock = new object();
@@ -126,6 +128,7 @@ namespace BidirectionalViewer
                 if (loaded.history_py == null) loaded.history_py = new List<string>();
                 if (loaded.registered_apps == null) loaded.registered_apps = new Dictionary<string, string>();
                 if (loaded.app_communicate == null) loaded.app_communicate = new Dictionary<string, bool>();
+                if (loaded.registered_post_apps == null) loaded.registered_post_apps = new Dictionary<string, string>();
 
                 if (loaded.capture_region != null && loaded.capture_region.Length != 4)
                 {
