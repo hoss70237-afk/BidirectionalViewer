@@ -599,6 +599,14 @@ namespace BidirectionalViewer
             else
             {
                 string currentText = _textArea.Text;
+                
+                // 本文の先頭に "--- user ---" がなければ追加
+                if (!currentText.StartsWith("--- user ---"))
+                {
+                    currentText = "--- user ---\r\n" + currentText;
+                    _textArea.Text = currentText;
+                }
+                
                 _statusLabel.Text = string.Format("アプリ {0} と通信中...", number);
                 Task.Run(() => RunAppWithCommunication(path, currentText, number, postPath));
             }
@@ -779,8 +787,24 @@ namespace BidirectionalViewer
                     string result = File.ReadAllText(tempOut, new UTF8Encoding(false));
                     if (!string.IsNullOrWhiteSpace(result))
                     {
-                        replacement = string.Format("\r\n\r\n--- アプリ {0} 応答 ---\r\n{1}", appNumber, result);
+                        // 応答結果が改行で終わっていなければ改行を追加
+                        if (!result.EndsWith("\n"))
+                        {
+                            result += "\r\n";
+                        }
+                        // 末尾に "--- user ---" と改行を追加
+                        replacement = string.Format("\r\n\r\n--- アプリ {0} 応答 ---\r\n{1}--- user ---\r\n", appNumber, result);
                     }
+                    else
+                    {
+                        // 応答が空でもマーカーを残す
+                        replacement = "\r\n\r\n--- user ---\r\n";
+                    }
+                }
+                else
+                {
+                    // ファイルがない場合
+                    replacement = "\r\n\r\n--- user ---\r\n";
                 }
                 
                 ReplaceTextThreadSafe(waitingMark, replacement);
@@ -798,7 +822,7 @@ namespace BidirectionalViewer
             catch (Exception ex)
             {
                 Logger.LogException("RunAppWithCommunication", ex);
-                ReplaceTextThreadSafe(waitingMark, string.Format("\r\n\r\n--- アプリ {0} 通信エラー ---", appNumber));
+                ReplaceTextThreadSafe(waitingMark, string.Format("\r\n\r\n--- アプリ {0} 通信エラー ---\r\n--- user ---\r\n", appNumber));
             }
             finally
             {
