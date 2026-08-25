@@ -321,6 +321,41 @@ namespace BidirectionalViewer
             }
         }
 
+        private void ReplaceTextThreadSafe(string oldValue, string newValue)
+        {
+            if (_textArea.InvokeRequired)
+            {
+                _textArea.Invoke(new Action<string, string>(ReplaceTextThreadSafe), oldValue, newValue);
+                return;
+            }
+            
+            if (!string.IsNullOrEmpty(oldValue))
+            {
+                int index = _textArea.Text.IndexOf(oldValue);
+                if (index >= 0)
+                {
+                    // 対象のテキストを選択状態にして置換することで、スクロール位置を極力保持します
+                    _textArea.Select(index, oldValue.Length);
+                    if (newValue != null)
+                    {
+                        newValue = newValue.Replace("\r\n", "\n").Replace("\n", "\r\n");
+                    }
+                    _textArea.SelectedText = newValue ?? string.Empty;
+                }
+                else
+                {
+                    // 何らかの理由で待機マークがユーザーによって消されていた場合は、末尾に追記します
+                    if (!string.IsNullOrEmpty(newValue))
+                    {
+                        newValue = newValue.Replace("\r\n", "\n").Replace("\n", "\r\n");
+                        _textArea.AppendText(newValue);
+                    }
+                }
+            }
+            FlashTextAreaGreen();
+            RestoreWindow();
+        }
+
         private string GetTextThreadSafe()
         {
             if (_textArea.InvokeRequired) return (string)_textArea.Invoke(new Func<string>(GetTextThreadSafe));
@@ -509,7 +544,7 @@ namespace BidirectionalViewer
             {
                 string currentText = _textArea.Text;
                 _statusLabel.Text = string.Format("アプリ {0} と通信中...", number);
-                Task.Run(() => RunAppWithCommunication(path, currentText));
+                Task.Run(() => RunAppWithCommunication(path, currentText, number));
             }
         }
 
@@ -548,8 +583,14 @@ namespace BidirectionalViewer
             return null;
         }
 
-        private void RunAppWithCommunication(string exePath, string inputText)
+        private void RunAppWithCommunication(string exePath, string inputText, int appNumber)
         {
+            // 待機マークを作成し、テキストエリアに追記しておく
+            string appName = Path.GetFileName(exePath);
+            string waitingMark = string.Format("\r\n\r\n--- アプリ {0} ({1}) 応答待ち [{2}] ---", appNumber, appName, DateTime.Now.ToString("HH:mm:ss"));
+            
+            AppendTextThreadSafe(waitingMark);
+
             string tempIn = null;
             string tempOut = null;
             try
@@ -597,14 +638,19 @@ namespace BidirectionalViewer
                     }
                 }
                 
+                string replacement = ""; // 応答がない場合は空文字にして待機マークを削除する
                 if (File.Exists(tempOut))
                 {
                     string result = File.ReadAllText(tempOut, new UTF8Encoding(false));
                     if (!string.IsNullOrWhiteSpace(result))
                     {
-                        AppendTextThreadSafe("\r\n\r\n--- 応答 ---\r\n" + result);
+                        // 応答があった場合、待機マークを上書きするための文字列を準備
+                        replacement = string.Format("\r\n\r\n--- アプリ {0} 応答 ---\r\n{1}", appNumber, result);
                     }
                 }
+                
+                // 待機マークを応答テキスト(または空文字)に置換する
+                ReplaceTextThreadSafe(waitingMark, replacement);
                 
                 if (this.InvokeRequired)
                 {
@@ -614,6 +660,8 @@ namespace BidirectionalViewer
             catch (Exception ex)
             {
                 Logger.LogException("RunAppWithCommunication", ex);
+                // エラーが発生した場合も待機マークをエラーメッセージに置換する
+                ReplaceTextThreadSafe(waitingMark, string.Format("\r\n\r\n--- アプリ {0} 通信エラー ---", appNumber));
             }
             finally
             {
